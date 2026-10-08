@@ -1,8 +1,20 @@
 # FastDDS-Bridge
 
-FastDDS-Bridge exposes matching Fast DDS topics through a Rosbridge-compatible
-WebSocket for Lichtblick. It loads message schemas directly from IDL files; no
-ROS runtime, ROS message packages, or topic-by-topic YAML is needed.
+FastDDS-Bridge connects Fast DDS applications to Rosbridge-compatible tools such
+as [Lichtblick](https://lichtblick-suite.github.io/lichtblick/). It reads type
+schemas directly from IDL files and exposes matching DDS topics over a
+Rosbridge WebSocket. No ROS runtime, ROS message packages, or per-topic YAML is
+required.
+
+## Lichtblick
+
+Use the [hosted Lichtblick app](https://lichtblick-suite.github.io/lichtblick/)
+or run your own deployment from the
+[Lichtblick source repository](https://github.com/lichtblick-suite/lichtblick).
+In Lichtblick, add a Rosbridge connection to the bridge's WebSocket URL. For a
+local Lichtblick deployment at `http://localhost:8080`, use
+`ws://localhost:9090`. The hosted app uses HTTPS, so connect it to a publicly
+reachable secure WebSocket endpoint (`wss://`).
 
 ## Build
 
@@ -26,11 +38,10 @@ source build/Release/generators/conanrun.sh
 The bridge discovers DDS reader and writer endpoints at runtime. It exposes
 every discovered topic whose type is defined by the supplied IDLs. The
 Rosbridge topic name is the DDS topic name with a leading `/` added when needed.
-Every exposed topic supports both Rosbridge `subscribe` and `publish`.
-Topics appear in Lichtblick after a matching DDS endpoint is discovered.
+Every exposed topic supports both Rosbridge `subscribe` and `publish`. Topics
+appear in Lichtblick after a matching DDS endpoint is discovered.
 
-The Rosbridge WebSocket is at `ws://localhost:9090`. In Lichtblick at
-`http://localhost:8080`, add a Rosbridge connection using that WebSocket URL.
+The bridge's default WebSocket URL is `ws://localhost:9090`.
 
 The sample publisher advertises three example topics from the supplied IDLs:
 
