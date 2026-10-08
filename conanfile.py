@@ -10,7 +10,6 @@ class FastDdsBridgeConan(ConanFile):
     requires = (
         "fast-dds/3.4.3",
         "ixwebsocket/12.0.0",
-        "yaml-cpp/0.8.0",
         "nlohmann_json/3.12.0",
     )
     tool_requires = "cmake/[>=3.27]"

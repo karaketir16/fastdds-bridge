@@ -1,138 +1,106 @@
 #include "config.hpp"
 
-#include <set>
+#include <algorithm>
+#include <cstdlib>
+#include <iostream>
+#include <limits>
 #include <stdexcept>
-
-#include <yaml-cpp/yaml.h>
 
 namespace
 {
-template<typename T>
-T required(const YAML::Node& node, const char* key, const std::string& context)
+void append_idl_path(BridgeConfig& config, const std::filesystem::path& input)
 {
-    const auto value = node[key];
-    if (!value)
+    const auto path = std::filesystem::absolute(input).lexically_normal();
+    if (!std::filesystem::exists(path))
     {
-        throw std::runtime_error(context + " is missing required field '" + key + "'");
+        throw std::runtime_error("IDL path does not exist: " + path.string());
     }
-    try
+    if (std::filesystem::is_regular_file(path))
     {
-        return value.as<T>();
+        if (path.extension() != ".idl")
+        {
+            throw std::runtime_error("IDL input must have a .idl extension: " + path.string());
+        }
+        config.idl_files.push_back(path);
+        return;
     }
-    catch (const YAML::Exception& error)
+    if (!std::filesystem::is_directory(path))
     {
-        throw std::runtime_error(context + " has invalid field '" + key + "': " + error.what());
+        throw std::runtime_error("IDL input is neither a file nor a directory: " + path.string());
+    }
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(path))
+    {
+        if (entry.is_regular_file() && entry.path().extension() == ".idl")
+        {
+            config.idl_files.push_back(std::filesystem::absolute(entry.path()).lexically_normal());
+        }
     }
 }
 
-std::string default_wire_type(const std::string& idl_type)
+template<typename T>
+T parse_number(const std::string& value, const std::string& flag)
 {
-    std::string result;
-    for (std::size_t i = 0; i < idl_type.size(); ++i)
+    try
     {
-        if (idl_type[i] == ':' && i + 1 < idl_type.size() && idl_type[i + 1] == ':')
+        std::size_t parsed = 0;
+        const auto number = std::stoull(value, &parsed);
+        if (parsed != value.size() || number > static_cast<unsigned long long>(std::numeric_limits<T>::max()))
         {
-            result.push_back('/');
-            ++i;
+            throw std::out_of_range("value out of range");
+        }
+        return static_cast<T>(number);
+    }
+    catch (const std::exception&)
+    {
+        throw std::runtime_error("invalid value for " + flag + ": " + value);
+    }
+}
+}
+
+BridgeConfig parse_arguments(int argc, char** argv)
+{
+    BridgeConfig config;
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string argument = argv[i];
+        if (argument == "--idl" && i + 1 < argc)
+        {
+            append_idl_path(config, argv[++i]);
+        }
+        else if (argument == "--host" && i + 1 < argc)
+        {
+            config.host = argv[++i];
+        }
+        else if (argument == "--port" && i + 1 < argc)
+        {
+            config.port = parse_number<uint16_t>(argv[++i], argument);
+            if (config.port == 0)
+            {
+                throw std::runtime_error("--port must be between 1 and 65535");
+            }
+        }
+        else if (argument == "--domain" && i + 1 < argc)
+        {
+            config.domain_id = parse_number<uint32_t>(argv[++i], argument);
+        }
+        else if (argument == "--help")
+        {
+            std::cout << "Usage: fastdds_bridge --idl FILE_OR_DIRECTORY [--idl FILE_OR_DIRECTORY ...] "
+                         "[--domain ID] [--host HOST] [--port PORT]\n";
+            std::exit(0);
         }
         else
         {
-            result.push_back(idl_type[i]);
+            throw std::runtime_error("unknown or incomplete argument: " + argument);
         }
     }
-    return result;
-}
-}
 
-BridgeConfig load_config(const std::filesystem::path& config_path)
-{
-    const auto absolute_config = std::filesystem::absolute(config_path);
-    if (!std::filesystem::is_regular_file(absolute_config))
+    std::sort(config.idl_files.begin(), config.idl_files.end());
+    config.idl_files.erase(std::unique(config.idl_files.begin(), config.idl_files.end()), config.idl_files.end());
+    if (config.idl_files.empty())
     {
-        throw std::runtime_error("configuration file does not exist: " + absolute_config.string());
+        throw std::runtime_error("provide at least one IDL file or directory with --idl");
     }
-
-    YAML::Node root;
-    try
-    {
-        root = YAML::LoadFile(absolute_config.string());
-    }
-    catch (const YAML::Exception& error)
-    {
-        throw std::runtime_error("cannot parse configuration file: " + std::string(error.what()));
-    }
-
-    BridgeConfig config;
-    const auto server = root["server"];
-    if (!server || !server.IsMap())
-    {
-        throw std::runtime_error("configuration requires a 'server' mapping");
-    }
-    if (server["host"])
-    {
-        config.host = server["host"].as<std::string>();
-    }
-    if (server["port"])
-    {
-        config.port = server["port"].as<uint16_t>();
-        if (config.port == 0)
-        {
-            throw std::runtime_error("server.port must be between 1 and 65535");
-        }
-    }
-    if (server["domain_id"])
-    {
-        config.domain_id = server["domain_id"].as<uint32_t>();
-    }
-
-    const auto topics = root["topics"];
-    if (!topics || !topics.IsSequence() || topics.size() == 0)
-    {
-        throw std::runtime_error("configuration requires a non-empty 'topics' sequence");
-    }
-
-    std::set<std::string> dds_topics;
-    std::set<std::string> exposed_topics;
-    for (std::size_t i = 0; i < topics.size(); ++i)
-    {
-        const auto entry = topics[i];
-        const auto context = "topics[" + std::to_string(i) + "]";
-        if (!entry.IsMap())
-        {
-            throw std::runtime_error(context + " must be a mapping");
-        }
-
-        TopicConfig topic;
-        topic.dds_topic = required<std::string>(entry, "dds_topic", context);
-        const auto idl = required<std::string>(entry, "idl", context);
-        topic.idl_path = (absolute_config.parent_path() / idl).lexically_normal();
-        topic.type_name = required<std::string>(entry, "type_name", context);
-        topic.rosbridge_topic = required<std::string>(entry, "rosbridge_topic", context);
-        topic.wire_type = entry["wire_type"] ? entry["wire_type"].as<std::string>() : default_wire_type(topic.type_name);
-        topic.allow_publish = entry["allow_publish"] ? entry["allow_publish"].as<bool>() : false;
-
-        if (topic.dds_topic.empty() || topic.type_name.empty() || topic.rosbridge_topic.empty() || topic.wire_type.empty())
-        {
-            throw std::runtime_error(context + " contains an empty topic or type name");
-        }
-        if (topic.rosbridge_topic.front() != '/')
-        {
-            throw std::runtime_error(context + " rosbridge_topic must start with '/'");
-        }
-        if (!std::filesystem::is_regular_file(topic.idl_path))
-        {
-            throw std::runtime_error(context + " IDL file does not exist: " + topic.idl_path.string());
-        }
-        if (!dds_topics.insert(topic.dds_topic).second)
-        {
-            throw std::runtime_error("duplicate DDS topic in configuration: " + topic.dds_topic);
-        }
-        if (!exposed_topics.insert(topic.rosbridge_topic).second)
-        {
-            throw std::runtime_error("duplicate Rosbridge topic in configuration: " + topic.rosbridge_topic);
-        }
-        config.topics.push_back(std::move(topic));
-    }
-
     return config;
 }

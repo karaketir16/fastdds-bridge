@@ -63,7 +63,7 @@ nlohmann::json RosbridgeProtocol::call_service(const nlohmann::json& request)
     if (service == "/rosapi/topics")
     {
         values = {{"topics", nlohmann::json::array()}, {"types", nlohmann::json::array()}};
-        for (const auto& topic : registry_.topics())
+        for (const auto* topic : registry_.topics())
         {
             values["topics"].push_back(topic->config.rosbridge_topic);
             values["types"].push_back(topic->config.wire_type);
@@ -73,7 +73,7 @@ nlohmann::json RosbridgeProtocol::call_service(const nlohmann::json& request)
     {
         values = { {"topics", nlohmann::json::array()}, {"types", nlohmann::json::array()},
             {"typedefs_full_text", nlohmann::json::array()} };
-        for (const auto& topic : registry_.topics())
+        for (const auto* topic : registry_.topics())
         {
             values["topics"].push_back(topic->config.rosbridge_topic);
             values["types"].push_back(topic->config.wire_type);
@@ -141,7 +141,7 @@ std::vector<nlohmann::json> RosbridgeProtocol::handle(const std::string& client_
             auto* topic = registry_.find_topic(topic_name);
             if (topic == nullptr)
             {
-                return {status("error", "topic is not in the bridge allowlist: " + topic_name, request)};
+                return {status("error", "topic has not been discovered with a supplied IDL type: " + topic_name, request)};
             }
             const auto type = request.value("type", topic->config.wire_type);
             if (type != topic->config.wire_type)
@@ -175,9 +175,9 @@ std::vector<nlohmann::json> RosbridgeProtocol::handle(const std::string& client_
         {
             const auto topic_name = request.value("topic", "");
             auto* topic = registry_.find_topic(topic_name);
-            if (topic == nullptr || !topic->config.allow_publish)
+            if (topic == nullptr)
             {
-                return {status("error", "topic is not configured for publishing: " + topic_name, request)};
+                return {status("error", "topic has not been discovered with a supplied IDL type: " + topic_name, request)};
             }
             const auto type = request.value("type", "");
             if (type != topic->config.wire_type)
@@ -204,9 +204,9 @@ std::vector<nlohmann::json> RosbridgeProtocol::handle(const std::string& client_
         {
             const auto topic_name = request.value("topic", "");
             auto* topic = registry_.find_topic(topic_name);
-            if (topic == nullptr || !topic->config.allow_publish)
+            if (topic == nullptr)
             {
-                return {status("error", "topic is not configured for publishing: " + topic_name, request)};
+                return {status("error", "topic has not been discovered with a supplied IDL type: " + topic_name, request)};
             }
             if (request.contains("type") && request["type"] != topic->config.wire_type)
             {

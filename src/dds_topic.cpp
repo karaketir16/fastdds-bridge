@@ -1,6 +1,7 @@
 #include "dds_topic.hpp"
 
 #include <algorithm>
+#include <iostream>
 #include <map>
 #include <set>
 #include <sstream>
@@ -71,6 +72,11 @@ std::string wire_name(const DynamicType::_ref_type& type)
         }
     }
     return result;
+}
+
+std::string rosbridge_name(const std::string& dds_topic)
+{
+    return !dds_topic.empty() && dds_topic.front() == '/' ? dds_topic : "/" + dds_topic;
 }
 
 std::string field_type_name(const DynamicType::_ref_type& type, const std::string& nested_wire_prefix)
@@ -248,7 +254,9 @@ nlohmann::json type_definitions_for(const DynamicType::_ref_type& root_type, con
 
 DdsTopicRegistry::DdsTopicRegistry(const BridgeConfig& config)
 {
-    participant_ = DomainParticipantFactory::get_instance()->create_participant(config.domain_id, PARTICIPANT_QOS_DEFAULT);
+    discovery_listener_ = std::make_unique<BridgeDiscoveryListener>();
+    participant_ = DomainParticipantFactory::get_instance()->create_participant(
+            config.domain_id, PARTICIPANT_QOS_DEFAULT, discovery_listener_.get());
     if (participant_ == nullptr)
     {
         throw std::runtime_error("Fast DDS could not create a DomainParticipant");
@@ -257,62 +265,63 @@ DdsTopicRegistry::DdsTopicRegistry(const BridgeConfig& config)
     try
     {
         auto factory = DynamicTypeBuilderFactory::get_instance();
-        for (const auto& topic_config : config.topics)
+        IncludePathSeq include_paths;
+        for (const auto& idl_path : config.idl_files)
         {
-            topics_.push_back(std::make_unique<TopicRuntime>());
-            auto& runtime = *topics_.back();
-            runtime.config = topic_config;
-
-            const IncludePathSeq include_paths{topic_config.idl_path.parent_path().string()};
-            DynamicTypeBuilder::_ref_type selected_builder;
+            const auto include_path = idl_path.parent_path().string();
+            if (std::find(include_paths.begin(), include_paths.end(), include_path) == include_paths.end())
+            {
+                include_paths.push_back(include_path);
+            }
+        }
+        for (const auto& idl_path : config.idl_files)
+        {
+            std::vector<DynamicTypeBuilder::_ref_type> builders;
             const auto parse_result = factory->for_each_type_w_uri(
-                    topic_config.idl_path.string(), include_paths,
+                    idl_path.string(), include_paths,
                     [&](DynamicTypeBuilder::_ref_type candidate)
                     {
-                        if (candidate && candidate->get_name() == topic_config.type_name)
+                        if (candidate)
                         {
-                            selected_builder = candidate;
+                            builders.push_back(candidate);
                         }
                         return true;
                     });
             if (parse_result != RETCODE_OK)
             {
-                throw std::runtime_error("Fast DDS could not parse IDL file " + topic_config.idl_path.string());
+                throw std::runtime_error("Fast DDS could not parse IDL file " + idl_path.string());
             }
-            if (selected_builder == nullptr)
+            if (builders.empty())
             {
-                throw std::runtime_error("Fast DDS could not load type '" + topic_config.type_name + "' from " +
-                        topic_config.idl_path.string() + " (the IDL may be invalid or the type name may be absent)");
+                throw std::runtime_error("IDL file contains no usable types: " + idl_path.string());
             }
-            runtime.dynamic_type = selected_builder->build();
-            if (runtime.dynamic_type == nullptr)
+            for (auto& builder : builders)
             {
-                throw std::runtime_error("Fast DDS could not build dynamic type '" + topic_config.type_name + "'");
+                const auto type_name = std::string(builder->get_name().c_str());
+                if (idl_types_.find(type_name) != idl_types_.end())
+                {
+                    continue;
+                }
+                auto type = std::make_shared<IdlTypeRuntime>();
+                type->type_name = type_name;
+                type->dynamic_type = builder->build();
+                if (type->dynamic_type == nullptr)
+                {
+                    throw std::runtime_error("Fast DDS could not build dynamic type '" + type_name + "'");
+                }
+                type->wire_type = wire_name(type->dynamic_type);
+                type->type_support = TypeSupport(new DynamicPubSubType(type->dynamic_type));
+                if (type->type_support.register_type(participant_, type_name) != RETCODE_OK)
+                {
+                    throw std::runtime_error("Fast DDS could not register type '" + type_name + "'");
+                }
+                type->type_definitions = type_definitions_for(type->dynamic_type, type->wire_type);
+                idl_types_.emplace(type_name, std::move(type));
             }
-
-            runtime.type_support = TypeSupport(new DynamicPubSubType(runtime.dynamic_type));
-            if (runtime.type_support.register_type(participant_) != RETCODE_OK)
-            {
-                throw std::runtime_error("Fast DDS could not register type '" + topic_config.type_name + "'");
-            }
-            runtime.topic = participant_->create_topic(topic_config.dds_topic, runtime.type_support.get_type_name(), TOPIC_QOS_DEFAULT);
-            if (runtime.topic == nullptr)
-            {
-                throw std::runtime_error("Fast DDS could not create DDS topic '" + topic_config.dds_topic + "'");
-            }
-            runtime.publisher = participant_->create_publisher(PUBLISHER_QOS_DEFAULT, nullptr);
-            runtime.subscriber = participant_->create_subscriber(SUBSCRIBER_QOS_DEFAULT, nullptr);
-            if (runtime.publisher == nullptr || runtime.subscriber == nullptr)
-            {
-                throw std::runtime_error("Fast DDS could not create topic publisher/subscriber for '" + topic_config.dds_topic + "'");
-            }
-            runtime.writer = runtime.publisher->create_datawriter(runtime.topic, DATAWRITER_QOS_DEFAULT, nullptr);
-            runtime.reader = runtime.subscriber->create_datareader(runtime.topic, DATAREADER_QOS_DEFAULT, nullptr);
-            if (runtime.writer == nullptr || runtime.reader == nullptr)
-            {
-                throw std::runtime_error("Fast DDS could not create topic reader/writer for '" + topic_config.dds_topic + "'");
-            }
-            runtime.type_definitions = type_definitions_for(runtime.dynamic_type, topic_config.wire_type);
+        }
+        if (idl_types_.empty())
+        {
+            throw std::runtime_error("no types were loaded from the supplied IDL files");
         }
     }
     catch (...)
@@ -320,6 +329,43 @@ DdsTopicRegistry::DdsTopicRegistry(const BridgeConfig& config)
         release_entities();
         throw;
     }
+}
+
+void BridgeDiscoveryListener::enqueue(const char* topic, const char* type)
+{
+    if (topic == nullptr || type == nullptr || *topic == '\0' || *type == '\0') return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    discoveries_.push_back({topic, type});
+}
+
+void BridgeDiscoveryListener::on_data_reader_discovery(
+        DomainParticipant*, eprosima::fastdds::rtps::ReaderDiscoveryStatus reason,
+        const SubscriptionBuiltinTopicData& info, bool& should_be_ignored)
+{
+    should_be_ignored = false;
+    if (reason == eprosima::fastdds::rtps::ReaderDiscoveryStatus::DISCOVERED_READER)
+    {
+        enqueue(info.topic_name.c_str(), info.type_name.c_str());
+    }
+}
+
+void BridgeDiscoveryListener::on_data_writer_discovery(
+        DomainParticipant*, eprosima::fastdds::rtps::WriterDiscoveryStatus reason,
+        const PublicationBuiltinTopicData& info, bool& should_be_ignored)
+{
+    should_be_ignored = false;
+    if (reason == eprosima::fastdds::rtps::WriterDiscoveryStatus::DISCOVERED_WRITER)
+    {
+        enqueue(info.topic_name.c_str(), info.type_name.c_str());
+    }
+}
+
+std::vector<DiscoveredEndpoint> BridgeDiscoveryListener::take_discoveries()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<DiscoveredEndpoint> result;
+    result.swap(discoveries_);
+    return result;
 }
 
 DdsTopicRegistry::~DdsTopicRegistry()
@@ -361,13 +407,18 @@ void DdsTopicRegistry::release_entities() noexcept
     }
 }
 
-const std::vector<std::unique_ptr<TopicRuntime>>& DdsTopicRegistry::topics() const noexcept
+std::vector<TopicRuntime*> DdsTopicRegistry::topics() const
 {
-    return topics_;
+    std::lock_guard<std::mutex> lock(topics_mutex_);
+    std::vector<TopicRuntime*> result;
+    result.reserve(topics_.size());
+    for (const auto& topic : topics_) result.push_back(topic.get());
+    return result;
 }
 
-TopicRuntime* DdsTopicRegistry::find_topic(const std::string& rosbridge_topic) const noexcept
+TopicRuntime* DdsTopicRegistry::find_topic(const std::string& rosbridge_topic) const
 {
+    std::lock_guard<std::mutex> lock(topics_mutex_);
     const auto found = std::find_if(topics_.begin(), topics_.end(), [&](const auto& topic)
     {
         return topic->config.rosbridge_topic == rosbridge_topic;
@@ -375,8 +426,9 @@ TopicRuntime* DdsTopicRegistry::find_topic(const std::string& rosbridge_topic) c
     return found == topics_.end() ? nullptr : found->get();
 }
 
-TopicRuntime* DdsTopicRegistry::find_type(const std::string& wire_type) const noexcept
+TopicRuntime* DdsTopicRegistry::find_type(const std::string& wire_type) const
 {
+    std::lock_guard<std::mutex> lock(topics_mutex_);
     const auto found = std::find_if(topics_.begin(), topics_.end(), [&](const auto& topic)
     {
         return topic->config.wire_type == wire_type;
@@ -384,8 +436,82 @@ TopicRuntime* DdsTopicRegistry::find_type(const std::string& wire_type) const no
     return found == topics_.end() ? nullptr : found->get();
 }
 
+TopicRuntime* DdsTopicRegistry::add_topic(const std::string& dds_topic, const std::string& type_name)
+{
+    std::lock_guard<std::mutex> lock(topics_mutex_);
+    const auto known = idl_types_.find(type_name);
+    if (known == idl_types_.end()) return nullptr;
+
+    const auto exposed_name = rosbridge_name(dds_topic);
+    const auto existing_entry = std::find_if(topics_.begin(), topics_.end(), [&](const auto& topic)
+    {
+        return topic->config.rosbridge_topic == exposed_name;
+    });
+    if (existing_entry != topics_.end())
+    {
+        auto* existing = existing_entry->get();
+        if (existing->config.type_name != type_name)
+        {
+            std::cerr << "Ignoring DDS topic '" << dds_topic << "': it was already discovered with type '"
+                      << existing->config.type_name << "', not '" << type_name << "'\n";
+        }
+        return existing;
+    }
+
+    auto runtime = std::make_unique<TopicRuntime>();
+    runtime->config.dds_topic = dds_topic;
+    runtime->config.type_name = type_name;
+    runtime->config.rosbridge_topic = exposed_name;
+    runtime->config.wire_type = known->second->wire_type;
+    runtime->idl_type = known->second;
+    runtime->dynamic_type = known->second->dynamic_type;
+    runtime->type_support = known->second->type_support;
+    runtime->type_definitions = known->second->type_definitions;
+    runtime->topic = participant_->create_topic(dds_topic, type_name, TOPIC_QOS_DEFAULT);
+    if (runtime->topic == nullptr)
+    {
+        throw std::runtime_error("Fast DDS could not create discovered topic '" + dds_topic + "'");
+    }
+    runtime->publisher = participant_->create_publisher(PUBLISHER_QOS_DEFAULT, nullptr);
+    runtime->subscriber = participant_->create_subscriber(SUBSCRIBER_QOS_DEFAULT, nullptr);
+    if (runtime->publisher == nullptr || runtime->subscriber == nullptr)
+    {
+        if (runtime->subscriber != nullptr) participant_->delete_subscriber(runtime->subscriber);
+        if (runtime->publisher != nullptr) participant_->delete_publisher(runtime->publisher);
+        participant_->delete_topic(runtime->topic);
+        throw std::runtime_error("Fast DDS could not create endpoints for discovered topic '" + dds_topic + "'");
+    }
+    runtime->writer = runtime->publisher->create_datawriter(runtime->topic, DATAWRITER_QOS_DEFAULT, nullptr);
+    runtime->reader = runtime->subscriber->create_datareader(runtime->topic, DATAREADER_QOS_DEFAULT, nullptr);
+    if (runtime->writer == nullptr || runtime->reader == nullptr)
+    {
+        if (runtime->reader != nullptr) runtime->subscriber->delete_datareader(runtime->reader);
+        if (runtime->writer != nullptr) runtime->publisher->delete_datawriter(runtime->writer);
+        participant_->delete_subscriber(runtime->subscriber);
+        participant_->delete_publisher(runtime->publisher);
+        participant_->delete_topic(runtime->topic);
+        throw std::runtime_error("Fast DDS could not create reader/writer for discovered topic '" + dds_topic + "'");
+    }
+    auto* result = runtime.get();
+    topics_.push_back(std::move(runtime));
+    std::cout << "Discovered " << dds_topic << " as " << exposed_name << " (" << type_name << ")\n";
+    return result;
+}
+
+void DdsTopicRegistry::process_discoveries()
+{
+    for (const auto& endpoint : discovery_listener_->take_discoveries())
+    {
+        if (idl_types_.find(endpoint.type_name) != idl_types_.end())
+        {
+            add_topic(endpoint.topic_name, endpoint.type_name);
+        }
+    }
+}
+
 std::vector<PublishedSample> DdsTopicRegistry::take_samples()
 {
+    std::lock_guard<std::mutex> lock(topics_mutex_);
     std::vector<PublishedSample> samples;
     for (const auto& runtime : topics_)
     {

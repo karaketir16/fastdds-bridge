@@ -47,49 +47,48 @@ try {
   first.send({ op: 'call_service', service: '/rosapi/topics', id: 'topics' });
   const topics = await first.next((message) => message.op === 'service_response' && message.id === 'topics');
   assert.equal(topics.result, true);
-  assert.deepEqual(topics.values.topics, ['/demo/telemetry', '/demo/path']);
-  assert.equal(topics.values.topics.includes('/not-allowlisted'), false);
+  assert.deepEqual([...topics.values.topics].sort(), ['/DemoPoseSequence', '/DemoTelemetry'].sort());
 
-  first.send({ op: 'call_service', service: '/rosapi/topic_type', id: 'type', args: { topic: '/demo/telemetry' } });
+  first.send({ op: 'call_service', service: '/rosapi/topic_type', id: 'type', args: { topic: '/DemoTelemetry' } });
   const type = await first.next((message) => message.op === 'service_response' && message.id === 'type');
-  assert.equal(type.values.type, 'fastdds_bridge/msg/Telemetry');
+  assert.equal(type.values.type, 'demo/msg/Telemetry');
 
   first.send({ op: 'call_service', service: '/rosapi/message_details', id: 'details', args: { type: type.values.type } });
   const details = await first.next((message) => message.op === 'service_response' && message.id === 'details');
   assert.deepEqual(details.values.typedefs[0].fieldnames, ['sample_sequence', 'value', 'label', 'active']);
 
-  first.send({ op: 'call_service', service: '/rosapi/message_details', id: 'path-details', args: { type: 'fastdds_bridge/msg/PoseSequence' } });
+  first.send({ op: 'call_service', service: '/rosapi/message_details', id: 'path-details', args: { type: 'demo/msg/PoseSequence' } });
   const pathDetails = await first.next((message) => message.op === 'service_response' && message.id === 'path-details');
-  assert.deepEqual(pathDetails.values.typedefs[0].fieldtypes, ['int32', 'fastdds_bridge/msg/Point3', 'string']);
-  assert.equal(pathDetails.values.typedefs.some((definition) => definition.type === 'fastdds_bridge/msg/Point3'), true);
+  assert.deepEqual(pathDetails.values.typedefs[0].fieldtypes, ['int32', 'demo/msg/Point3', 'string']);
+  assert.equal(pathDetails.values.typedefs.some((definition) => definition.type === 'demo/msg/Point3'), true);
 
-  first.send({ op: 'subscribe', topic: '/demo/telemetry', type: type.values.type });
-  first.send({ op: 'subscribe', topic: '/demo/path', type: 'fastdds_bridge/msg/PoseSequence' });
-  const nestedSample = await first.next((message) => message.op === 'publish' && message.topic === '/demo/path');
+  first.send({ op: 'subscribe', topic: '/DemoTelemetry', type: type.values.type });
+  first.send({ op: 'subscribe', topic: '/DemoPoseSequence', type: 'demo/msg/PoseSequence' });
+  const nestedSample = await first.next((message) => message.op === 'publish' && message.topic === '/DemoPoseSequence');
   assert.equal(nestedSample.msg.path.length, 3);
   assert.equal(nestedSample.msg.path[1].y, 0.5);
-  second.send({ op: 'subscribe', topic: '/demo/telemetry', type: type.values.type });
-  second.send({ op: 'unsubscribe', topic: '/demo/telemetry' });
+  second.send({ op: 'subscribe', topic: '/DemoTelemetry', type: type.values.type });
+  second.send({ op: 'unsubscribe', topic: '/DemoTelemetry' });
   first.send({
-    op: 'publish', topic: '/demo/telemetry', type: type.values.type,
+    op: 'publish', topic: '/DemoTelemetry', type: type.values.type,
     msg: { sample_sequence: 9001, value: 12.5, label: 'websocket smoke', active: true },
   });
   const echo = await first.next((message) => message.op === 'publish' &&
-    message.topic === '/demo/telemetry' && message.msg?.label === 'websocket smoke');
+    message.topic === '/DemoTelemetry' && message.msg?.label === 'websocket smoke');
   assert.equal(echo.msg.sample_sequence, 9001);
   await assert.rejects(
     second.next((message) => message.op === 'publish' && message.msg?.label === 'websocket smoke', 500),
     /Timed out waiting/,
   );
 
-  first.send({ op: 'publish', topic: '/demo/telemetry', msg: { sample_sequence: 'wrong' } });
+  first.send({ op: 'publish', topic: '/DemoTelemetry', msg: { sample_sequence: 'wrong' } });
   const invalid = await first.next((message) => message.op === 'status' && message.level === 'error');
   assert.match(invalid.msg, /IDL type/);
 
-  first.send({ op: 'publish', topic: '/not-allowlisted', msg: {} });
-  const denied = await first.next((message) => message.op === 'status' && message.msg.includes('allowlist'));
+  first.send({ op: 'publish', topic: '/unknown_topic', msg: {} });
+  const denied = await first.next((message) => message.op === 'status' && message.msg.includes('not been discovered'));
   assert.equal(denied.level, 'error');
-  console.log('Rosbridge smoke check passed: discovery, schema, subscriptions, DDS publish, schema rejection, allowlist rejection.');
+  console.log('Rosbridge smoke check passed: discovery, schema, subscriptions, DDS publish, and schema rejection.');
 } finally {
   first.close();
   second.close();

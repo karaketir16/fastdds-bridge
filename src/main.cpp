@@ -21,44 +21,14 @@ void stop(int)
 
 int main(int argc, char** argv)
 {
-    std::filesystem::path config_path = "config/bridge.yaml";
-    bool validate_only = false;
-    for (int i = 1; i < argc; ++i)
-    {
-        const std::string argument = argv[i];
-        if (argument == "--config" && i + 1 < argc)
-        {
-            config_path = argv[++i];
-        }
-        else if (argument == "--validate-config")
-        {
-            validate_only = true;
-        }
-        else if (argument == "--help")
-        {
-            std::cout << "Usage: fastdds_bridge [--config FILE] [--validate-config]\n";
-            return 0;
-        }
-        else
-        {
-            std::cerr << "Unknown argument: " << argument << '\n';
-            return 2;
-        }
-    }
-
     try
     {
-        const auto config = load_config(config_path);
+        const auto config = parse_arguments(argc, argv);
         DdsTopicRegistry registry(config);
-        for (const auto& topic : registry.topics())
+        std::cout << "Loaded " << config.idl_files.size() << " IDL file(s); waiting for matching DDS topics\n";
+        for (const auto& idl : config.idl_files)
         {
-            std::cout << "Loaded " << topic->config.dds_topic << " as "
-                      << topic->config.rosbridge_topic << " ("
-                      << topic->config.wire_type << ")\n";
-        }
-        if (validate_only)
-        {
-            return 0;
+            std::cout << "  " << idl.string() << '\n';
         }
         RosbridgeProtocol protocol(registry);
         WebSocketServer server(protocol);
@@ -71,6 +41,7 @@ int main(int argc, char** argv)
         std::cout << "Rosbridge WebSocket listening on ws://" << config.host << ':' << config.port << '\n';
         while (running)
         {
+            registry.process_discoveries();
             for (const auto& sample : registry.take_samples())
             {
                 server.publish(sample);

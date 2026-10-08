@@ -19,26 +19,15 @@ void stop(int)
 
 int main(int argc, char** argv)
 {
-    std::filesystem::path config_path = "config/bridge.yaml";
-    if (argc == 3 && std::string(argv[1]) == "--config")
-    {
-        config_path = argv[2];
-    }
-    else if (argc != 1)
-    {
-        std::cerr << "Usage: fastdds_bridge_example_publisher [--config FILE]\n";
-        return 2;
-    }
-
     try
     {
-        const auto config = load_config(config_path);
+        const auto config = parse_arguments(argc, argv);
         DdsTopicRegistry registry(config);
-        auto* telemetry = registry.find_topic("/demo/telemetry");
-        auto* path = registry.find_topic("/demo/path");
+        auto* telemetry = registry.add_topic("DemoTelemetry", "demo::msg::Telemetry");
+        auto* path = registry.add_topic("DemoPoseSequence", "demo::msg::PoseSequence");
         if (telemetry == nullptr || path == nullptr)
         {
-            throw std::runtime_error("example publisher requires /demo/telemetry and /demo/path in the config");
+            throw std::runtime_error("sample IDL files must define demo::msg::Telemetry and demo::msg::PoseSequence");
         }
 
         std::signal(SIGINT, stop);
