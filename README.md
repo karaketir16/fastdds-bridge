@@ -11,10 +11,16 @@ required.
 Use the [hosted Lichtblick app](https://lichtblick-suite.github.io/lichtblick/)
 or run your own deployment from the
 [Lichtblick source repository](https://github.com/lichtblick-suite/lichtblick).
-In Lichtblick, add a Rosbridge connection to the bridge's WebSocket URL. For a
-local Lichtblick deployment at `http://localhost:8080`, use
-`ws://localhost:9090`. The hosted app uses HTTPS, so connect it to a publicly
-reachable secure WebSocket endpoint (`wss://`).
+If Lichtblick and FastDDS-Bridge are running on the same computer, open the
+hosted app with its Rosbridge connection preconfigured:
+
+[Open Lichtblick connected to `ws://localhost:9090`](https://lichtblick-suite.github.io/lichtblick/?ds=rosbridge-websocket&ds.url=ws://localhost:9090)
+
+Here `localhost` is resolved by the browser, so it reaches the bridge running
+on that same computer. The same `ws://localhost:9090` address works when using
+your own local Lichtblick deployment. If the bridge runs on another machine,
+use an address reachable from the browser; for a remote endpoint from the
+hosted HTTPS app, configure a secure WebSocket URL (`wss://`).
 
 ## Build
 
