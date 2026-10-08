@@ -1,0 +1,30 @@
+module demo {
+    module msg {
+        enum DriveMode {
+            STOPPED,
+            MANUAL,
+            AUTONOMOUS
+        };
+
+        struct Vector3 {
+            double x;
+            double y;
+            double z;
+        };
+
+        struct Waypoint {
+            double x;
+            double y;
+            double speed;
+        };
+
+        struct VehicleState {
+            @key long device_id;
+            string<32> name;
+            DriveMode mode;
+            Vector3 position;
+            sequence<Waypoint, 4> route;
+            double covariance[3];
+        };
+    };
+};

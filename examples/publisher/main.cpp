@@ -25,9 +25,11 @@ int main(int argc, char** argv)
         DdsTopicRegistry registry(config);
         auto* telemetry = registry.add_topic("DemoTelemetry", "demo::msg::Telemetry");
         auto* path = registry.add_topic("DemoPoseSequence", "demo::msg::PoseSequence");
-        if (telemetry == nullptr || path == nullptr)
+        auto* vehicle = registry.add_topic("DemoVehicleState", "demo::msg::VehicleState");
+        if (telemetry == nullptr || path == nullptr || vehicle == nullptr)
         {
-            throw std::runtime_error("sample IDL files must define demo::msg::Telemetry and demo::msg::PoseSequence");
+            throw std::runtime_error(
+                      "sample IDL files must define demo::msg::Telemetry, demo::msg::PoseSequence, and demo::msg::VehicleState");
         }
 
         std::signal(SIGINT, stop);
@@ -49,6 +51,27 @@ int main(int argc, char** argv)
                     {{"x", 2.0}, {"y", 1.0}, {"z", 0.5}},
                 })},
                 {"status", "sample path"},
+            });
+            registry.write_json(*vehicle, {
+                {"device_id", 101},
+                {"name", "rover-alpha"},
+                {"mode", "demo::msg::AUTONOMOUS"},
+                {"position", {{"x", 12.5 + sequence}, {"y", 3.0}, {"z", 0.0}}},
+                {"route", nlohmann::json::array({
+                    {{"x", 13.0 + sequence}, {"y", 3.0}, {"speed", 1.5}},
+                    {{"x", 14.0 + sequence}, {"y", 4.0}, {"speed", 0.75}},
+                })},
+                {"covariance", nlohmann::json::array({0.1, 0.0, 0.1})},
+            });
+            registry.write_json(*vehicle, {
+                {"device_id", 202},
+                {"name", "rover-beta"},
+                {"mode", "demo::msg::MANUAL"},
+                {"position", {{"x", -2.0}, {"y", 8.0 + sequence}, {"z", 0.5}}},
+                {"route", nlohmann::json::array({
+                    {{"x", -1.0}, {"y", 8.0 + sequence}, {"speed", 0.5}},
+                })},
+                {"covariance", nlohmann::json::array({0.2, 0.01, 0.2})},
             });
             std::cout << "Published sample " << sequence++ << '\n';
             std::this_thread::sleep_for(std::chrono::seconds(1));

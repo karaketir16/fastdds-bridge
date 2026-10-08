@@ -31,3 +31,14 @@ target_link_libraries(fastdds_bridge PRIVATE
 add_executable(fastdds_bridge_example_publisher examples/publisher/main.cpp)
 target_compile_features(fastdds_bridge_example_publisher PRIVATE cxx_std_17)
 target_link_libraries(fastdds_bridge_example_publisher PRIVATE fastdds_bridge_core)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(fastdds_bridge_key_test tests/keyed_idl_smoke.cpp)
+    target_compile_features(fastdds_bridge_key_test PRIVATE cxx_std_17)
+    target_link_libraries(fastdds_bridge_key_test PRIVATE fastdds)
+    target_compile_definitions(fastdds_bridge_key_test PRIVATE
+        VEHICLE_IDL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/idl/VehicleState.idl"
+    )
+    add_test(NAME keyed_idl_instance_semantics COMMAND fastdds_bridge_key_test)
+endif()

@@ -32,11 +32,35 @@ Topics appear in Lichtblick after a matching DDS endpoint is discovered.
 The Rosbridge WebSocket is at `ws://localhost:9090`. In Lichtblick at
 `http://localhost:8080`, add a Rosbridge connection using that WebSocket URL.
 
-The sample publisher advertises two example topics from the supplied IDLs:
+The sample publisher advertises three example topics from the supplied IDLs:
 
 ```sh
 source build/Release/generators/conanrun.sh
 ./build/Release/fastdds_bridge_example_publisher --idl examples/idl
+```
+
+The examples cover plain scalar/string fields, nested structures, a bounded
+sequence, a fixed array, an enum, and a keyed `VehicleState` topic. The sample
+publisher writes vehicle IDs `101` and `202` repeatedly; writes with the same
+`device_id` update one DDS instance, while each distinct ID represents a
+separate instance. For Fast DDS's OMG JSON representation, enum values use the
+fully-qualified IDL literal, such as `demo::msg::AUTONOMOUS`.
+
+## Checks
+
+Build and run the DDS key-instance check with:
+
+```sh
+conan build . --output-folder=. --build=missing -s build_type=Release
+ctest --test-dir build/Release --output-on-failure
+```
+
+With the bridge and example publisher running, the Rosbridge smoke test also
+checks schema discovery for nested/keyed types, both sample vehicle IDs,
+sequence and enum data, and publishing a keyed message through the WebSocket:
+
+```sh
+ROSBRIDGE_URL=ws://localhost:9090 node scripts/rosbridge-smoke.mjs
 ```
 
 ## IDL inputs
