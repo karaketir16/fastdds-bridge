@@ -1,0 +1,19 @@
+server:
+  host: 0.0.0.0
+  port: 9090
+  domain_id: 0
+
+topics:
+  - dds_topic: DemoTelemetry
+    idl: ../examples/idl/Telemetry.idl
+    type_name: demo::msg::Telemetry
+    rosbridge_topic: /demo/telemetry
+    wire_type: fastdds_bridge/msg/Telemetry
+    allow_publish: true
+
+  - dds_topic: DemoPoseSequence
+    idl: ../examples/idl/PoseSequence.idl
+    type_name: demo::msg::PoseSequence
+    rosbridge_topic: /demo/path
+    wire_type: fastdds_bridge/msg/PoseSequence
+    allow_publish: true

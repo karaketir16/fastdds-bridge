@@ -1,0 +1,19 @@
+module demo
+{
+    module msg
+    {
+        struct Point3
+        {
+            double x;
+            double y;
+            double z;
+        };
+
+        struct PoseSequence
+        {
+            long sample_sequence;
+            sequence<Point3, 8> path;
+            string status;
+        };
+    };
+};

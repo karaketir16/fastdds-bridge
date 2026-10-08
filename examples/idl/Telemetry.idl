@@ -1,0 +1,13 @@
+module demo
+{
+    module msg
+    {
+        struct Telemetry
+        {
+            long sample_sequence;
+            double value;
+            string label;
+            boolean active;
+        };
+    };
+};
