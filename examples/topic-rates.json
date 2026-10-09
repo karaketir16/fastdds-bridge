@@ -1,0 +1,6 @@
+{
+  "topic_rates_hz": {
+    "/DemoTelemetry": 0.5,
+    "/DemoPoseSequence": 2
+  }
+}

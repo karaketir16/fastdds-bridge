@@ -1,6 +1,7 @@
 #include "config.hpp"
 #include "dds_topic.hpp"
 #include "rosbridge_protocol.hpp"
+#include "topic_rate_limiter.hpp"
 #include "websocket_server.hpp"
 
 #include <atomic>
@@ -25,6 +26,7 @@ int main(int argc, char** argv)
     {
         const auto config = parse_arguments(argc, argv);
         DdsTopicRegistry registry(config);
+        TopicRateLimiter rate_limiter(config.topic_rates_hz);
         std::cout << "Loaded " << config.idl_files.size() << " IDL file(s); waiting for matching DDS topics\n";
         for (const auto& idl : config.idl_files)
         {
@@ -42,7 +44,7 @@ int main(int argc, char** argv)
         while (running)
         {
             registry.process_discoveries();
-            for (const auto& sample : registry.take_samples())
+            for (const auto& sample : rate_limiter.process(registry.take_samples()))
             {
                 server.publish(sample);
             }

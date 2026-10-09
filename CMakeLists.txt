@@ -9,6 +9,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 add_library(fastdds_bridge_core
     src/config.cpp
     src/dds_topic.cpp
+    src/topic_rate_limiter.cpp
 )
 target_compile_features(fastdds_bridge_core PUBLIC cxx_std_17)
 target_include_directories(fastdds_bridge_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -41,4 +42,16 @@ if(BUILD_TESTING)
         VEHICLE_IDL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/idl/VehicleState.idl"
     )
     add_test(NAME keyed_idl_instance_semantics COMMAND fastdds_bridge_key_test)
+
+    find_program(NODE_EXECUTABLE NAMES node nodejs)
+    if(NODE_EXECUTABLE)
+        add_test(NAME rosbridge_topic_rate_limit
+            COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/rate-limit-smoke.mjs
+                $<TARGET_FILE:fastdds_bridge> $<TARGET_FILE:fastdds_bridge_example_publisher>
+        )
+        set_tests_properties(rosbridge_topic_rate_limit PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            TIMEOUT 25
+        )
+    endif()
 endif()

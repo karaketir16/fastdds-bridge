@@ -49,6 +49,33 @@ appear in Lichtblick after a matching DDS endpoint is discovered.
 
 The bridge's default WebSocket URL is `ws://localhost:9090`.
 
+## Per-topic rate limits
+
+Optionally pass a JSON configuration file with `--config`. It contains only
+the rate limits, keyed by Rosbridge topic name:
+
+```json
+{
+  "topic_rates_hz": {
+    "/DemoTelemetry": 0.5,
+    "/DemoPoseSequence": 2
+  }
+}
+```
+
+The repository includes this example as `examples/topic-rates.json`. Start the
+bridge with it like this:
+
+```sh
+./build/Release/fastdds_bridge --idl examples/idl --config examples/topic-rates.json --domain 0 --port 9090
+```
+
+Limits apply only when forwarding samples from DDS to Rosbridge clients.
+Unlisted topics remain unlimited, and Rosbridge publish requests to DDS are
+unaffected. For a limited topic, the bridge coalesces pending updates and
+forwards the newest sample no more often than the configured rate; it does not
+queue old samples to send later.
+
 The sample publisher advertises three example topics from the supplied IDLs:
 
 ```sh
